@@ -2,15 +2,15 @@ group 'billion.group.wireguard_flutter'
 version '1.0-SNAPSHOT'
 
 buildscript {
-    ext.kotlin_version = '1.8.10'
+    ext.kotlin_version = "1.8.22"
     repositories {
         google()
         mavenCentral()
     }
 
     dependencies {
-        classpath 'com.android.tools.build:gradle:7.1.3'
-        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+        classpath("com.android.tools.build:gradle:8.1.4")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version")
     }
 }
 
@@ -25,15 +25,16 @@ apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
 
 android {
-    compileSdkVersion 31
+    compileSdk = 35
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+        coreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
-        jvmTarget = '1.8'
+        jvmTarget = JavaVersion.VERSION_17
     }
 
     sourceSets {
@@ -41,7 +42,7 @@ android {
     }
 
     defaultConfig {
-        minSdkVersion 21
+        minSdk = 21
     }
 
     namespace 'billion.group.wireguard_flutter'
@@ -49,12 +50,12 @@ android {
 
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
-    implementation 'com.wireguard.android:tunnel:1.0.20230427'
-    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.2'
-    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.2"
+    implementation 'com.wireguard.android:tunnel:1.0.20230706'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3'
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3"
     implementation 'com.beust:klaxon:5.5'
-    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
 
     /// to run wireguard on Android 25 or lower
-    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.0.3"
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.4"
 }

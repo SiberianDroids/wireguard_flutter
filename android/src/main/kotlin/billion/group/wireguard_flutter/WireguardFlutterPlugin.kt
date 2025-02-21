@@ -1,33 +1,34 @@
 package billion.group.wireguard_flutter
 
-import io.flutter.embedding.engine.plugins.FlutterPlugin
-import io.flutter.plugin.common.MethodCall
-import io.flutter.plugin.common.MethodChannel
-import io.flutter.plugin.common.MethodChannel.MethodCallHandler
-import io.flutter.plugin.common.MethodChannel.Result
-import io.flutter.embedding.engine.plugins.activity.ActivityAware
-import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
-import io.flutter.plugin.common.PluginRegistry
 
 import android.app.Activity
-import io.flutter.embedding.android.FlutterActivity
-import android.content.Intent
 import android.content.Context
+import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
 import android.util.Log
-import com.beust.klaxon.Klaxon
-import com.wireguard.android.backend.*
-import com.wireguard.crypto.Key
-import com.wireguard.crypto.KeyPair
+import com.wireguard.android.backend.Backend
+import com.wireguard.android.backend.BackendException
+import com.wireguard.android.backend.GoBackend
+import com.wireguard.android.backend.Tunnel
+import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.plugins.FlutterPlugin
+import io.flutter.embedding.engine.plugins.activity.ActivityAware
+import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.EventChannel
-import kotlinx.coroutines.*
-import java.util.*
-
-
+import io.flutter.plugin.common.MethodCall
+import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugin.common.MethodChannel.MethodCallHandler
+import io.flutter.plugin.common.MethodChannel.Result
+import io.flutter.plugin.common.PluginRegistry
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.io.ByteArrayInputStream
+import java.util.Locale
 
 /** WireguardFlutterPlugin */
 
@@ -39,25 +40,33 @@ class WireguardFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
     PluginRegistry.ActivityResultListener {
     private lateinit var channel: MethodChannel
     private lateinit var events: EventChannel
-    private lateinit var tunnelName: String
-    private val futureBackend = CompletableDeferred<Backend>()
-    private var vpnStageSink: EventChannel.EventSink? = null
+
     private val scope = CoroutineScope(Job() + Dispatchers.Main.immediate)
-    private var backend: Backend? = null
+
     private var havePermission = false
     private lateinit var context: Context
     private var activity: Activity? = null
-    private var config: com.wireguard.config.Config? = null
-    private var tunnel: WireGuardTunnel? = null
+
+
     private val TAG = "NVPN"
     var isVpnChecked = false
+
     companion object {
+        private var vpnStageSink: EventChannel.EventSink? = null
+        private var backend: Backend? = null
+        private lateinit var tunnelName: String
         private var state: String = "no_connection"
+        private val futureBackend = CompletableDeferred<Backend>()
+        private var config: com.wireguard.config.Config? = null
+        private var tunnel: WireGuardTunnel? = null
+
+        suspend fun getBackend() = futureBackend.await()
 
         fun getStatus(): String {
             return state
         }
     }
+
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
         this.havePermission =
             (requestCode == PERMISSIONS_REQUEST_CODE) && (resultCode == Activity.RESULT_OK)
@@ -84,7 +93,6 @@ class WireguardFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
         channel = MethodChannel(flutterPluginBinding.binaryMessenger, METHOD_CHANNEL_NAME)
         events = EventChannel(flutterPluginBinding.binaryMessenger, METHOD_EVENT_NAME)
         context = flutterPluginBinding.applicationContext
-
         scope.launch(Dispatchers.IO) {
             try {
                 backend = createBackend()
@@ -137,7 +145,11 @@ class WireguardFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
     override fun onMethodCall(call: MethodCall, result: Result) {
 
         when (call.method) {
-            "initialize" -> setupTunnel(call.argument<String>("localizedDescription").toString(), result)
+            "initialize" -> setupTunnel(
+                call.argument<String>("localizedDescription").toString(),
+                result
+            )
+
             "start" -> {
                 connect(call.argument<String>("wgQuickConfig").toString(), result)
 
@@ -153,22 +165,28 @@ class WireguardFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
                     }
                 }
             }
+
             "stop" -> {
                 disconnect(result)
             }
+
             "stage" -> {
                 result.success(getStatus())
             }
+
             "checkPermission" -> {
                 checkPermission()
                 result.success(null)
             }
+
             "getDownloadData" -> {
                 getDownloadData(result)
             }
+
             "getUploadData" -> {
                 getUploadData(result)
             }
+
             else -> flutterNotImplemented(result)
         }
     }
@@ -212,12 +230,12 @@ class WireguardFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
     private fun disconnect(result: Result) {
         scope.launch(Dispatchers.IO) {
             try {
-                if (futureBackend.await().runningTunnelNames.isEmpty()) {
+                if (getBackend().runningTunnelNames.isEmpty()) {
                     updateStage("disconnected")
                     throw Exception("Tunnel is not running")
                 }
                 updateStage("disconnecting")
-                futureBackend.await().setState(
+                getBackend().setState(
                     tunnel(tunnelName) { state ->
                         scope.launch(Dispatchers.Main) {
                             Log.i(TAG, "onStateChange - $state")
@@ -248,7 +266,7 @@ class WireguardFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
                 val inputStream = ByteArrayInputStream(wgQuickConfig.toByteArray())
                 config = com.wireguard.config.Config.parse(inputStream)
                 updateStage("connecting")
-                futureBackend.await().setState(
+                getBackend().setState(
                     tunnel(tunnelName) { state ->
                         scope.launch(Dispatchers.Main) {
                             Log.i(TAG, "onStateChange - $state")
@@ -293,7 +311,7 @@ class WireguardFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
     private fun getDownloadData(result: Result) {
         scope.launch(Dispatchers.IO) {
             try {
-                val downloadData = futureBackend.await().getTransferData(tunnel(tunnelName)).rxBytes
+                val downloadData = getBackend().getStatistics(tunnel(tunnelName)).totalRx()
                 flutterSuccess(result, downloadData)
             } catch (e: Throwable) {
                 Log.e(TAG, "getDownloadData - ERROR - ${e.message}")
@@ -305,7 +323,7 @@ class WireguardFlutterPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
     private fun getUploadData(result: Result) {
         scope.launch(Dispatchers.IO) {
             try {
-                val uploadData = futureBackend.await().getTransferData(tunnel(tunnelName)).txBytes
+                val uploadData = getBackend().getStatistics(tunnel(tunnelName)).totalTx()
                 flutterSuccess(result, uploadData)
             } catch (e: Throwable) {
                 Log.e(TAG, "getUploadData - ERROR - ${e.message}")
